@@ -287,7 +287,11 @@ def runFrontend
       }
   let old? ← incrLoadFileName?.mapM fun incrFile => do
     let incr ← unsafe loadIncrSnapshot incrFile
-    if let some res := incr.snap.processedResult.get then
+    -- A loaded snapshot may have been saved from a different file (e.g. via `--incr-header-save`
+    -- on stdin) and so bake in a different `mainModule`. Patch it to match this invocation
+    -- so generated names like `_private.<mainModule>.<hash>...` stay consistent.
+    let snap := Language.Lean.setMainModule incr.snap mainModuleName
+    if let some res := snap.processedResult.get then
       withImporting do
         -- The central incr HACK:
         -- Initializers roughly perform one of two functions: initializing their own variable, or
@@ -301,7 +305,7 @@ def runFrontend
       -- `Language.Lean.process` (taken when the loaded header doesn't match the new file's
       -- imports) calls `importModules`, which in turn requires the flag to be set. Restore it.
       unsafe enableInitializersExecution
-    return incr.snap
+    return snap
   let processor := Language.Lean.process
   let snap ← processor setup old? ctx
   let snaps := Language.toSnapshotTree snap

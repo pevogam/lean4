@@ -844,4 +844,30 @@ def truncateToHeader (snap : InitialSnapshot) : InitialSnapshot := Id.run do
     result? := some { parsed with
       processedSnap := .finished none newProcessed } }
 
+/--
+Updates the post-import `cmdState`'s `Environment.mainModule` so that subsequent commands
+elaborated on top of `snap` produce names under the correct module. Needed when the loader's
+main module name differs from the one baked into the saved snapshot (e.g. the snapshot was
+saved from `--stdin` but is loaded for a real file). For non-truncated snapshots whose
+`mainModule` already matches, this is effectively a no-op.
+-/
+def setMainModule (snap : InitialSnapshot) (m : Name) : InitialSnapshot := Id.run do
+  let some parsed := snap.result? | return snap
+  let processed := parsed.processedSnap.get
+  let some hps := processed.result? | return snap
+  if hps.cmdState.env.header.mainModule == m then
+    return snap
+  let newEnv := hps.cmdState.env.setMainModule m
+  -- `Command.mkState` derives `auxDeclNGen.namePrefix` from `mkPrivateName env .anonymous`, which
+  -- bakes in `env.mainModule`. Re-derive so aux decls land in the new module's private namespace
+  -- (otherwise `delabConst` flags them as inaccessible and pretty-prints them with `✝`).
+  let newCmdState := { hps.cmdState with
+    env := newEnv
+    auxDeclNGen := { hps.cmdState.auxDeclNGen with namePrefix := mkPrivateName newEnv .anonymous } }
+  let newProcessed : HeaderProcessedSnapshot := { processed with
+    result? := some { hps with cmdState := newCmdState } }
+  { snap with
+    result? := some { parsed with
+      processedSnap := .finished none newProcessed } }
+
 end Lean

@@ -21,6 +21,12 @@ mangle_windows_path(MANGLED_CURRENT_SOURCE_DIR "${CMAKE_CURRENT_SOURCE_DIR}")
 
 set(LEAN_BIN "${MANGLED_BINARY_DIR}/bin")
 
+# Pre-elaborated header snapshots reused by tests with matching imports. The
+# `_lean` snapshot is for tests whose only import is `Lean`; the `_init`
+# snapshot is for tests with no imports at all (auto-imports `Init`).
+set(LEAN_HEADER_SNAPSHOT "${CMAKE_CURRENT_BINARY_DIR}/lean_header.snap")
+set(LEAN_HEADER_SNAPSHOT_INIT "${CMAKE_CURRENT_BINARY_DIR}/lean_header_init.snap")
+
 set(TEST_VARS "${LEAN_TEST_VARS}")
 
 # Test scripts can use these to find other parts of the repo, e.g. "$TEST_DIR/measure.py"
@@ -37,6 +43,9 @@ string(APPEND TEST_VARS " LEANC_OPTS='${LEANC_OPTS}'")
 
 # LEANC_OPTS in CXX is necessary for macOS c++ to find its headers
 string(APPEND TEST_VARS " CXX='${CMAKE_CXX_COMPILER} ${LEANC_OPTS}'")
+
+string(APPEND TEST_VARS " LEAN_HEADER_SNAPSHOT_LEAN='${LEAN_HEADER_SNAPSHOT}'")
+string(APPEND TEST_VARS " LEAN_HEADER_SNAPSHOT_INIT='${LEAN_HEADER_SNAPSHOT_INIT}'")
 
 set(WITH_TEST_ENV "${CMAKE_CURRENT_SOURCE_DIR}/with_stage${STAGE}_test_env.sh")
 set(WITH_BENCH_ENV "${CMAKE_CURRENT_SOURCE_DIR}/with_stage${STAGE}_bench_env.sh")
@@ -137,7 +146,7 @@ endfunction()
 # a single `measurements.jsonl` file in the pile directory, whose path will be
 # added to the list specified by the BENCH argument.
 function(add_test_pile DIR GLOB)
-  cmake_parse_arguments(ARGS "" BENCH EXCEPT ${ARGN})
+  cmake_parse_arguments(ARGS "" "BENCH;FIXTURES_REQUIRED" EXCEPT ${ARGN})
   cmake_path(ABSOLUTE_PATH DIR NORMALIZE)
 
   check_test_bench_scripts("${DIR}")
@@ -166,6 +175,12 @@ function(add_test_pile DIR GLOB)
       )
       if(EXISTS "${FILE}.serial")
         set_tests_properties("${FILE_IN_SOURCE_DIR}" PROPERTIES RUN_SERIAL TRUE)
+      endif()
+      if(ARGS_FIXTURES_REQUIRED)
+        set_tests_properties(
+          "${FILE_IN_SOURCE_DIR}"
+          PROPERTIES FIXTURES_REQUIRED "${ARGS_FIXTURES_REQUIRED}"
+        )
       endif()
     endif()
 
@@ -238,6 +253,42 @@ function(add_dir_of_test_dirs DIR)
   endforeach()
 endfunction()
 
+####################
+## Header snapshots ##
+####################
+
+# Build a header-only incremental snapshot for `import Lean`. Tests whose
+# only import is `Lean` opt into reusing this snapshot via `--incr-load`,
+# which skips re-importing on every test invocation.
+# The options here must match those passed by the elab/elab_fail runners
+# so the saved `cmdState` is consistent with what tests will see.
+# Best-effort: if the snapshot fails to build, runners fall back to the
+# normal path because they check that the snapshot file actually exists.
+# The snapshot is built lazily as a CTest setup fixture (not in `ALL`), so
+# regular `make` builds aren't blocked when the lean binary is in a state
+# that can't yet self-import.
+add_custom_target(
+  test_header_snapshots
+  COMMAND ${CMAKE_COMMAND} -E rm -f "${LEAN_HEADER_SNAPSHOT}" "${LEAN_HEADER_SNAPSHOT_INIT}"
+  COMMAND
+    bash -c
+    "echo 'import Lean' | '${LEAN_BIN}/lean' --stdin --incr-header-save='${LEAN_HEADER_SNAPSHOT}' -DprintMessageEndPos=true -Dlinter.all=false -DElab.inServer=true || true"
+  COMMAND
+    bash -c
+    "echo -n '' | '${LEAN_BIN}/lean' --stdin --incr-header-save='${LEAN_HEADER_SNAPSHOT_INIT}' -DprintMessageEndPos=true -Dlinter.all=false -DElab.inServer=true || true"
+  DEPENDS lean
+  COMMENT "Saving Lean header snapshots for tests"
+  VERBATIM
+)
+add_test(
+  NAME tests/test_header_snapshots
+  COMMAND ${CMAKE_COMMAND} --build "${CMAKE_BINARY_DIR}" --target test_header_snapshots
+)
+set_tests_properties(
+  tests/test_header_snapshots
+  PROPERTIES FIXTURES_SETUP lean_header_snapshot
+)
+
 # Benchmarks are split into two parts which should be roughly equal in total runtime.
 # In radar, each part is run on a different runner.
 set(PART1 "")
@@ -291,9 +342,10 @@ add_test_pile(
   EXCEPT
     async_select_channel.lean # Flaky
     sync_mutex.lean # Flaky
+  FIXTURES_REQUIRED lean_header_snapshot
 )
 add_test_pile(elab_bench *.lean BENCH PART2)
-add_test_pile(elab_fail *.lean)
+add_test_pile(elab_fail *.lean FIXTURES_REQUIRED lean_header_snapshot)
 add_test_pile(misc *.sh)
 add_test_pile(misc_bench *.sh BENCH PART2)
 add_test_pile(server *.lean)

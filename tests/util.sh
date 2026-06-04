@@ -123,6 +123,31 @@ function source_init {
   fi
 }
 
+# Append `--incr-load=...` to TEST_LEAN_ARGS if `$1`'s parsed header matches
+# one of the prebuilt snapshots exactly. The Lean snapshot is built from the
+# bytes `import Lean\n`; the Init snapshot from empty input. The file must
+# match byte-for-byte at the header level; if it doesn't, the loader takes
+# the slow path which costs the snapshot env *plus* a fresh import.
+function maybe_use_lean_header_snapshot {
+  [[ -n "${LEAN_DISABLE_HEADER_SNAPSHOT-}" ]] && return
+  # Reject any file using the module system (`module` keyword or `public`/`meta`-prefixed import).
+  # Those have header syntax that can't match either snapshot.
+  if grep -qE '^[[:space:]]*module([[:space:]]|$)|^[[:space:]]*(public[[:space:]]+)?meta[[:space:]]+import[[:space:]]+|^[[:space:]]*public[[:space:]]+import[[:space:]]+' "$1"; then
+    return
+  fi
+  local snap=
+  if awk 'NR==1 { if ($0 != "import Lean") exit 1; n=1; next }
+          /^[[:space:]]*import[[:space:]]+/ { exit 1 }
+          END { if (n != 1) exit 1 }' "$1"; then
+    snap=${LEAN_HEADER_SNAPSHOT_LEAN-}
+  elif ! grep -qE '^[[:space:]]*import[[:space:]]+' "$1"; then
+    snap=${LEAN_HEADER_SNAPSHOT_INIT-}
+  fi
+  if [[ -n "$snap" && -e "$snap" ]]; then
+    TEST_LEAN_ARGS+=( "--incr-load=$snap" )
+  fi
+}
+
 function run_before {
   if [[ -f "$1.before.sh" ]]; then
     bash -- "$1.before.sh" || fail "$1.before.sh failed"
