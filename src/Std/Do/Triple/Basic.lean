@@ -110,4 +110,30 @@ for `Q₁`, then `mp x h₁ h₂` is a proof for `Q₂` about `x`.
 theorem mp [WP m ps] (x : m α) (h₁ : Triple x P₁ Q₁) (h₂ : Triple x P₂ (Q₁ →ₚ Q₂)) : Triple x spred(P₁ ∧ P₂) (Q₁ ∧ₚ Q₂) :=
   Triple.iff.mpr <| SPred.and_mono (Triple.iff.mp h₁) (Triple.iff.mp h₂) |>.trans ((wp x).conjunctive Q₁ (Q₁ →ₚ Q₂)).mpr |>.trans ((wp x).mono _ _ PostCond.and_imp)
 
+/--
+Modus ponens in the postcondition for two Hoare triple specifications of a program `x`:
+a specification `h : Triple x P Q` upgrades an implication proof `hgoal : Triple x P (Q →ₚ R)`
+to `Triple x P R`.
+-/
+theorem post_imp_elim [WP m ps] {α : Type u} {x : m α} {P : Assertion ps} {Q R : PostCond α ps}
+    (h : Triple x P Q) (hgoal : Triple x P (Q →ₚ R)) : Triple x P R := by
+  have hm := Triple.mp x h hgoal
+  apply Triple.of_entails_wp
+  apply Triple.entails_wp_of_pre_post hm
+  · exact SPred.and_self.mpr
+  · exact PostCond.entails.mk (fun a => SPred.and_elim_r) (ExceptConds.and_elim_right _ _)
+
+/--
+Rotates a specified program `p` into program position. A triple for `prog` follows from a triple
+for `p` that assumes the postcondition `Q` of the specification `h` and establishes the goal
+`wp⟦prog⟧ Post`. The premise `hp` states that successful runs of `p` leave the state unchanged.
+-/
+theorem rotate_pre [WP m ps] {α β : Type u} {p : m α} {prog : m β}
+    {Pre : Assertion ps} {Q : PostCond α ps} {Post : PostCond β ps}
+    (hp : ∀ C : Assertion ps, wp⟦p⟧ (PostCond.noThrow fun _ => C) ⊢ₛ C)
+    (h : Triple p Pre Q)
+    (hgoal : Triple p Pre (Q →ₚ PostCond.noThrow fun _ => wp⟦prog⟧ Post)) :
+    Triple prog Pre Post :=
+  Triple.of_entails_wp ((Triple.iff.mp (Triple.post_imp_elim h hgoal)).trans (hp (wp⟦prog⟧ Post)))
+
 end Triple
