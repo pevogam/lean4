@@ -514,11 +514,18 @@ def mkSpecAttr : AttributeImpl where
         -- New metatheory `Std.Internal.Do.Triple` / `⊑ wp` specs.
         Internal.SpecAttr.specAttr.addSpecTheoremFromConst declName prio attrKind
       catch _ =>
-      let impl ← getBuiltinAttributeImpl `mvcgen_simp
+      -- Equality / unfold specs feed the `mvcgen_simp` set, which `mvcgen'` folds into its spec
+      -- database. The priority is passed straight to `mvcgen_simp` rather than through the attribute
+      -- syntax, which does not preserve it. An equational proposition or a definition to unfold is
+      -- accepted; any other proposition is rejected.
       try
-        let newStx ← `(attr| mvcgen_simp)
-        let newStx := newStx.raw.setArg 3 stx[1]
-        impl.add declName newStx attrKind
+        let info ← getAsyncConstInfo declName
+        if ← Meta.isProp info.sig.get.type then
+          unless ← Meta.forallTelescopeReducing info.sig.get.type fun _ concl => pure (concl.isAppOf ``Eq) do
+            throwError "expected an equational `simp` lemma"
+          Meta.addSimpTheorem mvcgenSimpExt declName (post := true) (inv := false) attrKind prio
+        else unless ← Meta.addDeclToUnfold mvcgenSimpExt declName (post := true) (inv := false) prio attrKind do
+          throwError "expected a definition to unfold"
       catch e =>
       trace[Elab.Tactic.Do.specAttr] "Reason for failure to apply spec attribute: {e.toMessageData}"
       throwError "Invalid 'spec': target was neither a Hoare triple specification nor a 'simp' lemma"
