@@ -253,6 +253,43 @@ def pl(n: int, singular: str, plural: str | None = None) -> str:
     return f"{n} {singular if n == 1 else plural}"
 
 
+def add_to_index(version: Version, refman: Path) -> None:
+    """Add an import and include for the new release notes to ``Manual/Releases.lean``.
+
+    Only needed for rc1 releases, where the release notes file is created for the
+    first time. For later releases the module is already imported and included.
+    """
+    module = util.get_release_notes_module_for(version)
+    index = refman / util.get_release_notes_index_path()
+    text = index.read_text()
+
+    import_line = f"import {module}"
+    if import_line in text:
+        print(f"[blue]Import for [b]{module}[/b] already present[/]")
+    else:
+        text = re.sub(
+            r"(?m)^import Manual\.Releases\.",
+            lambda m: f"{import_line}\n{m.group(0)}",
+            text,
+            count=1,
+        )
+        print(f"[green]Added import for [b]{module}[/b][/]")
+
+    include_line = f"{{include 0 {module}}}"
+    if include_line in text:
+        print(f"[blue]Include for [b]{module}[/b] already present[/]")
+    else:
+        text = re.sub(
+            r"(?m)^\{include 0 Manual\.Releases\.",
+            lambda m: f"{include_line}\n\n{m.group(0)}",
+            text,
+            count=1,
+        )
+        print(f"[green]Added include for [b]{module}[/b][/]")
+
+    index.write_text(text)
+
+
 def main(version: Version, refman: Path):
     util.initialize_rich()
     github = util.get_github_instance()
@@ -322,6 +359,9 @@ def main(version: Version, refman: Path):
 
     out = refman / util.get_release_notes_path_for(version)
     out.write_text("\n".join(lines) + "\n")
+
+    if version.rc == 1:
+        add_to_index(version, refman)
 
 
 class Args(Namespace):

@@ -441,9 +441,20 @@ def set_cmake_version(lrepo: LocalRepo, version: CMakeVersion) -> None:
 ###################
 
 
+def get_release_notes_stem_for(version: Version) -> str:
+    return str(version.stable).replace(".", "_")
+
+
 def get_release_notes_path_for(version: Version) -> str:
-    stem = str(version.stable).replace(".", "_")
-    return f"Manual/Releases/{stem}.lean"
+    return f"Manual/Releases/{get_release_notes_stem_for(version)}.lean"
+
+
+def get_release_notes_module_for(version: Version) -> str:
+    return f"Manual.Releases.«{get_release_notes_stem_for(version)}»"
+
+
+def get_release_notes_index_path() -> str:
+    return "Manual/Releases.lean"
 
 
 def get_release_notes_title_for(version: Version, release: GitRelease) -> str:
