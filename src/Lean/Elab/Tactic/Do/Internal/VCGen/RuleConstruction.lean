@@ -383,7 +383,7 @@ private def mkSpecBackwardProof
     let hpostRel ← mkExpectedTypeHint hpost relTy
     /- get the proof of `pre ⊑ wp prog postAbstract epostSpec`, where `post` is abstracted.
        Uses wp_consequence_le: post ⊑ post' → pre ⊑ wp x post epost → pre ⊑ wp x post' epost -/
-    specApplied ← mkAppM ``WPMonad.wp_consequence_le #[prog, postSpec, postAbstract, epostSpec, hpostRel, specApplied]
+    specApplied ← mkAppM ``WP.wp_consequence_le #[prog, postSpec, postAbstract, epostSpec, hpostRel, specApplied]
 
   /- abstract concrete `epost` if it is not already abstract -/
   unless epostAbstract.isMVar do
@@ -402,12 +402,12 @@ private def mkSpecBackwardProof
     if isBot then
       /- get the proof of `pre ⊑ wp prog postAbstract epostAbstract`, where `epost (= ⊥)` is abstracted.
         This proof DOES NOT have a `?epostImpl` premise -/
-      specApplied ← mkAppM ``WPMonad.wp_econs_bot_le #[prog, postAbstract, epostAbstract, specApplied]
+      specApplied ← mkAppM ``WP.wp_econs_bot_le #[prog, postAbstract, epostAbstract, specApplied]
     else
       /- Decompose `epostSpec ⊑ epostAbstract` into per-component proofs
         using `EPost.Cons.mk_le` and `EPost.Nil.le` -/
       let hepost ← decomposeEPostRel EPred epostSpec epostAbstract stateArgNames
-      specApplied ← mkAppM ``WPMonad.wp_econs_le #[prog, postAbstract, epostSpec, epostAbstract, hepost, specApplied]
+      specApplied ← mkAppM ``WP.wp_econs_le #[prog, postAbstract, epostSpec, epostAbstract, hepost, specApplied]
 
   /- By default we always abstract `pre`, since in most of the specifications
     `pre` is not schematic. In exceptional cases, where `pre` is schematic, it
@@ -452,7 +452,7 @@ public def tryMkBackwardRuleFromSpec (specThm : SpecTheorem) (info : WPInfo)
   let_expr PartialOrder.rel Pred' _cl' pre rhs := specType
     | throwError "target not a partial order ⊑ application {specType}"
   guard <| ← isDefEqGuarded info.Pred Pred'
-  let_expr Std.Internal.Do.wp _m' _Pred' _EPred' _monadInst' _instAL' _instEAL' instWP' _α prog postSpec epostSpec := rhs
+  let_expr Std.Internal.Do.wp _Prog' _Value' _Pred' _EPred' _instAL' _instEAL' instWP' prog postSpec epostSpec := rhs
     | throwError "target not a wp application {rhs}"
   guard <| ← isDefEqGuarded info.instWP instWP'
   -- Use local excess-state binders so explicit post premises can be re-lifted to `⊑`.
@@ -492,12 +492,12 @@ The postcondition, exception postcondition and precondition are created as metav
 abstracted by `abstractMVars`, giving a reusable proof term for `mkBackwardRuleFromExpr`.
 -/
 private def mkSimpBackwardProof
-    (info : WPInfo) (α m lhs rhs eqPrf : Expr) (ss : Array Expr) : MetaM AbstractMVarsResult := do
+    (info : WPInfo) (α progTy lhs rhs eqPrf : Expr) (ss : Array Expr) : MetaM AbstractMVarsResult := do
   let postTy ← mkArrow α info.Pred
   let post ← mkFreshExprMVar (userName := `Post) postTy
   let epost ← mkFreshExprMVar (userName := `EPost) info.EPred
   let mkWpApplyPostEpost (prog : Expr) : MetaM Expr := do
-    let wpProg ← mkAppOptM ``Std.Internal.Do.wp #[m, none, none, none, none, none, none, α, prog, post, epost]
+    let wpProg ← mkAppOptM ``Std.Internal.Do.wp #[progTy, α, none, none, none, none, none, prog, post, epost]
     return mkAppN wpProg ss
   let lhsWp ← mkWpApplyPostEpost lhs
   let rhsWp ← mkWpApplyPostEpost rhs
@@ -505,7 +505,7 @@ private def mkSimpBackwardProof
   let pre ← mkFreshExprMVar (userName := `Pre) preTy
   let premiseType ← mkAppM ``PartialOrder.rel #[pre, rhsWp]
   let h ← mkFreshExprMVar (userName := `h) premiseType
-  let mα := mkApp info.m α
+  let mα := progTy
   let motive ← withLocalDeclD `prog mα fun prog => do
     let progWp ← mkWpApplyPostEpost prog
     let body ← mkAppM ``PartialOrder.rel #[pre, progWp]
@@ -539,16 +539,20 @@ pre ⊑ wp lhs post epost s₁ ... sₙ
 public def tryMkBackwardRuleFromSimp (specThm : SpecTheorem) (info : WPInfo)
     : OptionT MetaM BackwardRule := do
   let wpInstTy ← whnfR (← Meta.inferType info.instWP)
-  let_expr Std.Internal.Do.WPMonad m' Pred' _EPred _monadInst _instAL _instEAL := wpInstTy
-    | throwError "expected a WPMonad instance, got {wpInstTy}"
-  guard <| ← isDefEqGuarded info.m m'
+  let_expr Std.Internal.Do.WP Prog' _Value' Pred' _EPred' _instAL _instEAL := wpInstTy
+    | throwError "expected a WP instance, got {wpInstTy}"
+  guard <| ← isDefEqGuarded info.progTy Prog'
   guard <| ← isDefEqGuarded info.Pred Pred'
   let (xs, _, eqPrf, eqType) ← specThm.instantiate
   let_expr Eq eqα lhs rhs := eqType
     | throwError "simp spec is not an equation: {eqType}"
+  -- Simp specs only fire on monadic programs `m α`. Recover the result type `α` at the `WP`
+  -- instance's `Value` universe and unify the equation type with `m α`, so the equation's inner
+  -- monad universes are pinned (mirrors the entailment-spec path).
   let wpType ← Meta.inferType info.instWP
-  let α ← mkFreshExprMVar (mkSort wpType.getAppFn.constLevels![0]!.succ)
-  guard <| ← isDefEqGuarded eqα (mkApp info.m α)
+  guard info.progTy.isApp
+  let α ← mkFreshExprMVar (mkSort wpType.getAppFn.constLevels![1]!.succ)
+  guard <| ← isDefEqGuarded eqα (mkApp info.progTy.appFn! α)
   for x in xs do
     if x.isMVar && !(← x.mvarId!.isAssigned) then
       let xType ← Meta.inferType x
@@ -565,7 +569,7 @@ public def tryMkBackwardRuleFromSimp (specThm : SpecTheorem) (info : WPInfo)
   for arg in info.excessArgs do
     let ty ← Meta.inferType arg
     ss := ss.push <| ← mkFreshExprMVar (userName := `s) ty
-  let res ← mkSimpBackwardProof info α info.m lhs rhs eqPrf ss
+  let res ← mkSimpBackwardProof info α (mkApp info.progTy.appFn! α) lhs rhs eqPrf ss
   mkBackwardRuleFromExpr res.expr res.paramNames.toList
 
 /-! ## Split rules -/
@@ -578,14 +582,8 @@ then `SplitInfo.splitWith` to build the splitting proof. Hypothesis types are
 discovered via `rwIfOrMatcher` inside the splitter telescope. -/
 public def mkBackwardRuleForSplit
     (splitInfo : SplitInfo) (info : WPInfo) : MetaM BackwardRule := do
-  let m := info.m
-  let mTy ← Meta.inferType m
-  let some aTy := if mTy.isForall then some mTy.bindingDomain! else none
-    | throwError "Expected monad type constructor at {indentExpr m}"
   let prf ←
-    withLocalDeclD `a aTy fun a => do
-    let ma := mkApp m a
-    splitInfo.withAbstract ma fun abstractInfo splitFVars => do
+    splitInfo.withAbstract info.progTy fun abstractInfo splitFVars => do
     -- Eta-reduce matcher alts for the backward rule pattern to avoid expensive
     -- higher-order unification. The alts are eta-expanded by `withAbstract` so that
     -- `splitWith`/`matcherApp.transform` can `instantiateLambda` them directly.
@@ -596,10 +594,10 @@ public def mkBackwardRuleForSplit
     let excessArgNamesTypes ← info.excessArgs.mapM fun arg =>
       return (`s, ← Meta.inferType arg)
     withLocalDeclsDND excessArgNamesTypes fun ss => do
-    withLocalDeclD `Post (← mkArrow a info.Pred) fun post => do
+    withLocalDeclD `Post (← mkArrow info.Value info.Pred) fun post => do
     withLocalDeclD `EPost info.EPred fun epost => do
     let mkWP (prog : Expr) : Expr :=
-      let args := info.args.take 7 ++ #[a, prog, post, epost]
+      let args := info.args.take 7 ++ #[prog, post, epost]
       mkAppN (mkAppN info.head args) ss
     let Pred' ← Meta.inferType (mkWP abstractProg)
     withLocalDeclD `Pre Pred' fun pre => do
@@ -623,18 +621,18 @@ public def mkBackwardRuleForSplit
           -- pattern (e.g., `Nat.zero` instead of `discr`), which is required for
           -- `rwMatcher` to discharge the equality hypotheses of congr equation theorems.
           -- For ite/dite, `bodyType` equals `mkGoal abstractProg` so this is equivalent.
-          let prog := bodyType.getArg! 3 |>.getArg! 8
+          let prog := bodyType.getArg! 3 |>.getArg! 7
           let res ← rwIfOrMatcher idx prog
           if res.proof?.isNone then
             throwError "mkBackwardRuleForSplit: rwIfOrMatcher failed for alt {idx}"
           let altParams := altFVars.all
           subgoals[idx]!.mvarId!.assign (← mkForallFVars altParams (mkGoal res.expr))
-          let context ← withLocalDecl `x .default ma fun x =>
+          let context ← withLocalDecl `x .default info.progTy fun x =>
             mkLambdaFVars #[x] (mkGoal x)
           let eqProof ← mkAppM ``congrArg #[context, res.proof?.get!]
           mkEqMPR eqProof (mkAppN subgoalHyps[idx]! altParams))
     let prf ← instantiateMVars prf
-    mkLambdaFVars (#[a] ++ splitFVars ++ ss ++ #[post, epost, pre] ++ subgoalHyps) prf
+    mkLambdaFVars (splitFVars ++ ss ++ #[post, epost, pre] ++ subgoalHyps) prf
   let prf ← instantiateMVars prf
   let res ← abstractMVars prf
   mkBackwardRuleFromExpr res.expr res.paramNames.toList

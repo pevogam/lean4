@@ -30,10 +30,10 @@ namespace Std.Internal.Do
 universe u v
 variable {m : Type u → Type v} {Pred : Type u} {EPred : Type u}
 
-/-- A Hoare triple for reasoning about monadic programs. A Hoare triple `Triple pre x post epost`
+/-- A Hoare triple for reasoning about programs. A Hoare triple `Triple pre x post epost`
 is a *specification* for `x`: if assertion `pre` holds before `x`, then postcondition `post` holds
 after running `x` (and `epost` handles any errors). -/
-structure Triple [Monad m] [Assertion Pred] [Assertion EPred] [WPMonad m Pred EPred] (pre : Pred) (x : m α) (post : α → Pred) (epost : EPred) : Prop where
+structure Triple {Prog : Type v} {Value : Type u} [Assertion Pred] [Assertion EPred] [WP Prog Value Pred EPred] (pre : Pred) (x : Prog) (post : Value → Pred) (epost : EPred) : Prop where
   /-- Construct a triple from a weakest precondition entailment. -/
   intro ::
   /-- The weakest precondition entailment witnessing the triple. -/
@@ -59,35 +59,39 @@ meta def unexpandTripleEPost : Lean.PrettyPrinter.Unexpander
 
 namespace Triple
 
-variable [Monad m] [Assertion Pred] [Assertion EPred] [WPMonad m Pred EPred]
+variable {Prog : Type v} {Value : Type u} [Assertion Pred] [Assertion EPred]
+  [WP Prog Value Pred EPred]
 
-theorem iff {x : m α} {pre : Pred} {post : α → Pred} {epost : EPred} :
+theorem iff {x : Prog} {pre : Pred} {post : Value → Pred} {epost : EPred} :
     Triple pre x post epost ↔ (pre ⊑ wp x post epost) :=
   ⟨fun ⟨h⟩ => h, fun h => ⟨h⟩⟩
 
-theorem iff_conseq {x : m α} {pre : Pred} {post : α → Pred} {epost : EPred} :
+theorem iff_conseq {x : Prog} {pre : Pred} {post : Value → Pred} {epost : EPred} :
     Triple pre x post epost ↔
     (∀ pre' post', (pre' ⊑ pre) → (post ⊑ post') → pre' ⊑ wp x post' epost) := by
   constructor
   · intro ⟨h⟩ pre' post' hpre hpost
-    exact PartialOrder.rel_trans hpre (PartialOrder.rel_trans h (WPMonad.wp_consequence x _ _ epost hpost))
+    exact PartialOrder.rel_trans hpre (PartialOrder.rel_trans h (WP.wp_consequence x _ _ epost hpost))
   · intro h
     exact ⟨h _ _ PartialOrder.rel_refl (fun _ => PartialOrder.rel_refl)⟩
 
-theorem entails_wp_of_pre_post {x : m α} {pre pre' : Pred} {post post' : α → Pred} {epost : EPred}
+theorem entails_wp_of_pre_post {x : Prog} {pre pre' : Pred} {post post' : Value → Pred} {epost : EPred}
     (h : Triple pre' x post' epost) (hpre : pre ⊑ pre') (hpost : post' ⊑ post) :
     pre ⊑ wp x post epost :=
   iff_conseq.mp h _ _ hpre hpost
 
-theorem entails_wp_of_pre {x : m α} {pre pre' : Pred} {post : α → Pred} {epost : EPred}
+theorem entails_wp_of_pre {x : Prog} {pre pre' : Pred} {post : Value → Pred} {epost : EPred}
     (h : Triple pre' x post epost) (hpre : pre ⊑ pre') :
     pre ⊑ wp x post epost :=
   iff_conseq.mp h _ _ hpre (fun _ => PartialOrder.rel_refl)
 
-theorem entails_wp_of_post {x : m α} {pre : Pred} {post post' : α → Pred} {epost : EPred}
+theorem entails_wp_of_post {x : Prog} {pre : Pred} {post post' : Value → Pred} {epost : EPred}
     (h : Triple pre x post' epost) (hpost : post' ⊑ post) :
     pre ⊑ wp x post epost :=
   iff_conseq.mp h _ _ PartialOrder.rel_refl hpost
+
+section Monad
+variable [Monad m] [∀ α, WP (m α) α Pred EPred] [WPMonad m Pred EPred]
 
 theorem pure (a : α) (h : pre ⊑ post a) :
     Triple pre (pure (f := m) a) post epost :=
@@ -100,19 +104,21 @@ theorem bind (x : m α) (f : α → m β)
     Triple pre (x >>= f) post epost := by
   apply iff.mpr
   apply PartialOrder.rel_trans (iff.mp hx)
-  apply PartialOrder.rel_trans (WPMonad.wp_consequence x mid (fun a => wp (f a) post epost) epost
+  apply PartialOrder.rel_trans (WP.wp_consequence x mid (fun a => wp (f a) post epost) epost
     (fun a => iff.mp (hf a)))
   exact WPMonad.wp_bind x f post epost
 
-theorem map (f : α → β) (x : m α)
+theorem map [LawfulMonad m] (f : α → β) (x : m α)
     (h : Triple pre x (fun a => post (f a)) epost) :
     Triple pre (f <$> x) post epost :=
   iff.mpr (PartialOrder.rel_trans (iff.mp h) (WPMonad.wp_map f x post epost))
 
-theorem seq (x : m (α → β)) (y : m α)
+theorem seq [LawfulMonad m] (x : m (α → β)) (y : m α)
     (h : Triple pre x (fun f => wp y (fun a => post (f a)) epost) epost) :
     Triple pre (x <*> y) post epost :=
   iff.mpr (PartialOrder.rel_trans (iff.mp h) (WPMonad.wp_seq x y post epost))
+
+end Monad
 
 end Triple
 

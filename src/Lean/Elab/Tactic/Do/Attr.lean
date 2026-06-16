@@ -293,7 +293,7 @@ Normalises a specification proof so its conclusion is in `pre ⊑ wp …` form.
 -/
 def tripleToWpProof? (proof type : Expr) : MetaM (Option (Expr × Expr)) := do
   let type ← whnfR type
-  if type.isAppOfArity ``Triple 12 then
+  if type.isAppOfArity ``Triple 11 then
     -- Build the `Triple.le_wp` projection application explicitly from the `Triple` type's own
     -- arguments rather than via `mkAppM`. `mkAppM` would re-synthesise the instance arguments
     -- (`Monad m`, `WPMonad m …`), which fails for transformer specs whose monad is a partially
@@ -427,10 +427,10 @@ bare `lhs ⊑ rhs` whose RHS is not a `wp` application (an invariant entailment 
 -/
 def selectProg (type : Expr) : MetaM (Option Expr) := do
   match_expr type with
-  | Triple _m _Pred _EPred _α _monad _instAL _instEAL _wpInst _pre prog _post _epost =>
+  | Triple _Pred _EPred _Prog _Value _instAL _instEAL _wpInst _pre prog _post _epost =>
     return prog
   | PartialOrder.rel _α _inst _pre rhs =>
-    let_expr wp _m _Pred _EPred _monad _instAL _instEAL _wpInst _α prog _post _epost := rhs
+    let_expr wp _Prog _Value _Pred _EPred _instAL _instEAL _wpInst prog _post _epost := rhs
       | return none
     return prog
   | _ => return none
