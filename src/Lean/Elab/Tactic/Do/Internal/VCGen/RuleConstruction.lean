@@ -131,6 +131,8 @@ public def mkBackwardRuleFromSpec (specThm : SpecTheoremNew) (m σs ps instWP : 
   -- In order for the backward rule to apply, we need to instantiate both `m` and `ps` with the ones
   -- given by the use site.
   let (xs, _bs, spec, specTy) ← specThm.proof.instantiate
+  -- Reduce reducible abbreviations so a spec stated as `abbrev s := ⦃P⦄ prog ⦃Q⦄` is recognized.
+  let specTy ← liftMetaM <| whnfR specTy
   let_expr f@Triple m' ps' instWP' α prog P Q := specTy
     | liftMetaM <| throwError "target not a Triple application {specTy}"
   -- Reject the spec and try the next if the monad doesn't match.

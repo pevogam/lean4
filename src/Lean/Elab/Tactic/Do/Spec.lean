@@ -30,6 +30,8 @@ public def findSpec (database : SpecTheorems) (wp : Expr) : MetaM SpecTheorem :=
   trace[Elab.Tactic.Do.spec] "Candidates for {prog}: {candidates.map (·.proof)}"
   let specs ← candidates.filterM fun spec => do
     let (_, _, _, type) ← spec.proof.instantiate
+    -- Reduce reducible abbreviations so a spec stated as `abbrev s := ⦃P⦄ prog ⦃Q⦄` is recognized.
+    let type ← whnfR type
     trace[Elab.Tactic.Do.spec] "{spec.proof} instantiates to {type}"
     let_expr c@Triple m ps instWP α specProg _P _Q := type | throwError "Not a triple: {type}"
     let check := isDefEqGuarded wp (mkApp5 (mkConst ``WP.wp c.constLevels!) m ps instWP α specProg)

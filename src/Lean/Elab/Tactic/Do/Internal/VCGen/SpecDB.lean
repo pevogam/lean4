@@ -100,7 +100,11 @@ public def mkSpecTheoremNew (proof : SpecProof) (prio : Nat) : SymM (Option Spec
   let (levelParams, expr) ← proof.getProof
   let type ← Meta.inferType expr
   let type ← instantiateMVars type
-  unless type.getForallBody.getAppFn.isConstOf ``Triple do
+  -- Reduce reducible abbreviations so a spec stated as `abbrev s := ⦃P⦄ prog ⦃Q⦄` is recognized.
+  let isTripleSpec ← withNewMCtxDepth do
+    let (_, _, body) ← forallMetaTelescope type
+    return (← whnfR body).getAppFn.isConstOf ``Triple
+  unless isTripleSpec do
     return none
   let pattern ← mkTriplePatternFromExpr expr levelParams
   withNewMCtxDepth do
